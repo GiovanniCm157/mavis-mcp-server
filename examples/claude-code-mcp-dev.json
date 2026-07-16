@@ -1,0 +1,13 @@
+{
+  "_comment": "Dev mode config (no build step). Requires npx + tsx in PATH.",
+  "_comment_2": "Save to ~/.config/claude-code/mcp.json.",
+  "mcpServers": {
+    "mavis": {
+      "command": "npx",
+      "args": ["tsx", "/absolute/path/to/mavis-mcp-server/src/cli.ts"],
+      "env": {
+        "MAVIS_WORKSPACE": "/absolute/path/to/your/project"
+      }
+    }
+  }
+}

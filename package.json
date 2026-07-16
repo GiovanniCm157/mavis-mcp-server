@@ -1,0 +1,37 @@
+{
+  "name": "mavis-mcp-server",
+  "version": "0.1.0",
+  "description": "MCP server that exposes Mavis's coding tools (bash, edit, git, supabase) to Claude Code. Lets Claude reason, Mavis execute.",
+  "type": "module",
+  "main": "dist/server.js",
+  "bin": {
+    "mavis-mcp": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli.ts",
+    "start": "node dist/cli.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "claude-code",
+    "Mavis",
+    "coding-agent"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^2.0.0"
+  },
+  "license": "MIT"
+}

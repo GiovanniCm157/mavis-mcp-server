@@ -1,0 +1,13 @@
+{
+  "_comment": "Example Claude Code MCP config. Save to ~/.config/claude-code/mcp.json or use via the Claude Code UI.",
+  "_comment_2": "Replace the paths below with your actual absolute paths.",
+  "mcpServers": {
+    "mavis": {
+      "command": "node",
+      "args": ["/absolute/path/to/mavis-mcp-server/dist/cli.js"],
+      "env": {
+        "MAVIS_WORKSPACE": "/absolute/path/to/your/project"
+      }
+    }
+  }
+}
