@@ -12,6 +12,7 @@ import { gitTool } from './git.js';
 import { supabaseTool } from './supabase.js';
 import { runTestsTool } from './run_tests.js';
 import { stateTool } from './state.js';
+import { coderTool } from './coder.js';
 import type { ToolDef } from './types.js';
 
 export const tools: ToolDef[] = [
@@ -23,7 +24,8 @@ export const tools: ToolDef[] = [
     gitTool,
     supabaseTool,
     runTestsTool,
-    stateTool
+    stateTool,
+    coderTool
 ];
 
 // Re-export individual tools so tests can import them directly.
@@ -36,7 +38,8 @@ export {
     gitTool,
     supabaseTool,
     runTestsTool,
-    stateTool
+    stateTool,
+    coderTool
 };
 
-export type { ToolDef, ToolContext } from './types.js';
+export type { ToolDef, ToolContext, LlmContext } from './types.js';
