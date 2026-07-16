@@ -6,10 +6,16 @@
  */
 
 export { coderCall } from './coder.js';
+export { coderAgent, stripThinkBlocks } from './coder-loop.js';
 export type {
+    AgentRequest,
+    AgentResponse,
     AgentResult,
+    AgentTool,
+    AgentToolCallRecord,
     CoderRequest,
     CoderResponse,
     CoderUsage,
-    LlmConfig
+    LlmConfig,
+    ToolExecutor
 } from './types.js';
