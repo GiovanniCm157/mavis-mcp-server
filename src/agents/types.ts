@@ -10,7 +10,7 @@
  *   - coder         : MiniMax-M3 single-shot text generation (B-1)
  *   - coderAgent    : MiniMax-M3 with tool-calling agent loop (B-2)
  *   - auditor       : read-only KOMO antipattern detector (B-3)
- *   - noter         : writes directly to NotebookLM via nlm CLI (B-4, future)
+ *   - noter         : wraps nlm CLI for NotebookLM queries (B-4)
  */
 
 import type OpenAI from 'openai';
@@ -35,15 +35,10 @@ export interface CoderUsage {
 }
 
 export interface CoderResponse {
-    /** Generated text content. */
     content: string;
-    /** Token usage reported by the API. */
     usage: CoderUsage;
-    /** Model id that actually responded. */
     model: string;
-    /** Wall-clock latency in milliseconds. */
     latency_ms: number;
-    /** Finish reason: "stop" | "length" | "content_filter" | "tool_calls" (B-2). */
     finish_reason: string;
 }
 
@@ -99,17 +94,15 @@ export type ToolExecutor = (name: string, args: Record<string, any>) => Promise<
 // B-3: Auditor types
 // ────────────────────────────────────────────────────────────
 
-/** Severity of an audit finding. */
 export type FindingSeverity = 'error' | 'warning' | 'info';
 
-/** Categories of KOMO antipatterns the auditor can detect. */
 export type CheckKind =
-    | 'muro_de_fuego'        // tenant isolation: query ops_* sin ownerId
-    | 'zero_bifurcation'     // if/else por categoria en vez de getVerticalStrategy
-    | 'service_no_wire'      // service function sin window.* en controller
-    | 'mega_function'        // función > 200 líneas
-    | 'direct_auth_users'    // referencia a auth.users en RLS
-    | 'jsonb_column_audit';  // toca col JSONB sin documentar otras queries
+    | 'muro_de_fuego'
+    | 'zero_bifurcation'
+    | 'service_no_wire'
+    | 'mega_function'
+    | 'direct_auth_users'
+    | 'jsonb_column_audit';
 
 export const ALL_CHECKS: CheckKind[] = [
     'muro_de_fuego',
@@ -120,67 +113,70 @@ export const ALL_CHECKS: CheckKind[] = [
     'jsonb_column_audit'
 ];
 
-/** A single finding. Like a linter diagnostic. */
 export interface Finding {
-    /** File where the issue was found (workspace-relative). */
     file: string;
-    /** 1-indexed line number. May be undefined if the finding is file-level. */
     line?: number;
-    /** Which check flagged it. */
     kind: CheckKind;
-    /** Severity: 'error' (must fix), 'warning' (should fix), 'info' (FYI). */
     severity: FindingSeverity;
-    /** Human-readable message describing the issue. */
     message: string;
-    /** Optional code snippet (the line that triggered the finding). */
     snippet?: string;
 }
 
 export interface AuditorRequest {
-    /**
-     * File or directory to audit. Workspace-relative path. Defaults to
-     * '.' (the entire workspace). If a directory, all supported source
-     * files are scanned recursively.
-     */
     path?: string;
-    /**
-     * Glob filter (e.g. "*.js", "*.ts"). Defaults to "*.{js,ts,tsx,jsx}".
-     * Applied at file enumeration time — not the same as the path.
-     */
     glob?: string;
-    /**
-     * Subset of checks to run. Defaults to ALL_CHECKS.
-     */
     checks?: CheckKind[];
-    /**
-     * Minimum severity to report. Findings below this threshold are
-     * silently dropped. Defaults to 'info' (all findings).
-     */
     severity_threshold?: FindingSeverity;
-    /**
-     * Max number of findings to return. Defaults to 200. If exceeded,
-     * the response includes a `truncated: true` flag and the first N
-     * findings (sorted by severity, then by file/line).
-     */
     max_findings?: number;
 }
 
 export interface AuditorResponse {
-    /** All findings, sorted by severity (errors first) then file/line. */
     findings: Finding[];
-    /** Aggregate stats. */
     summary: {
         total: number;
         by_severity: Record<FindingSeverity, number>;
         by_kind: Record<CheckKind, number>;
     };
-    /** True if findings were truncated by max_findings. */
     truncated: boolean;
-    /** Which checks were actually run (after filtering). */
     checks_run: CheckKind[];
-    /** How many files were scanned. */
     files_scanned: number;
-    /** Wall-clock latency. */
+    latency_ms: number;
+}
+
+// ────────────────────────────────────────────────────────────
+// B-4: Noter types
+// ────────────────────────────────────────────────────────────
+
+/** Actions the noter can perform against NotebookLM via nlm CLI. */
+export type NoterAction = 'query' | 'add_source' | 'create_notebook' | 'list_notebooks' | 'doctor';
+
+export interface NoterRequest {
+    action: NoterAction;
+    /** Notebook UUID (required for query/add_source). */
+    notebook_id?: string;
+    /** Conversation UUID (optional — keeps context across queries). */
+    conversation_id?: string;
+    /** The question or text to send (required for query). */
+    question?: string;
+    /** File path or URL to add as a source (required for add_source). */
+    source?: string;
+    /** Notebook title (required for create_notebook). */
+    title?: string;
+    /** Max wait in seconds for nlm CLI. Defaults to 60. */
+    timeout_seconds?: number;
+}
+
+export interface NoterResponse {
+    /** Action-specific primary output. */
+    answer?: string;
+    /** Notebooks listed (for list_notebooks). */
+    notebooks?: Array<{ id: string; title: string }>;
+    /** New notebook id (for create_notebook). */
+    notebook_id?: string;
+    /** Conversation id (for query, may be a new one if not provided). */
+    conversation_id?: string;
+    /** Raw stdout from nlm CLI (for debugging). */
+    raw_stdout?: string;
     latency_ms: number;
 }
 

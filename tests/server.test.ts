@@ -23,8 +23,8 @@ describe('mavis MCP server', () => {
         rmSync(workDir, { recursive: true, force: true });
     });
 
-    it('exposes 12 tools via the registry (9 base + 2 LLM agents + 1 auditor)', () => {
-        expect(tools.length).toBe(12);
+    it('exposes 13 tools via the registry (9 base + 2 LLM agents + 1 auditor + 1 noter)', () => {
+        expect(tools.length).toBe(13);
         const names = tools.map(t => t.name);
         expect(names).toContain('mavis_bash');
         expect(names).toContain('mavis_read');
@@ -38,6 +38,7 @@ describe('mavis MCP server', () => {
         expect(names).toContain('mavis_coder');
         expect(names).toContain('mavis_coder_agent');
         expect(names).toContain('mavis_auditor');
+        expect(names).toContain('mavis_noter');
     });
 
     it('every tool has a non-empty name, description, and inputSchema', () => {
@@ -75,6 +76,6 @@ describe('mavis MCP server', () => {
                 // We just want to verify the handler is callable.
             }
         }
-        expect(tools.length).toBe(12);
+        expect(tools.length).toBe(13);
     });
 });

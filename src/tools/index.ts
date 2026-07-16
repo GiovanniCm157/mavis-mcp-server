@@ -15,6 +15,7 @@ import { stateTool } from './state.js';
 import { coderTool } from './coder.js';
 import { coderAgentTool } from './coder-agent.js';
 import { auditorTool } from './auditor.js';
+import { noterTool } from './noter.js';
 import type { ToolDef } from './types.js';
 
 export const tools: ToolDef[] = [
@@ -29,7 +30,8 @@ export const tools: ToolDef[] = [
     stateTool,
     coderTool,
     coderAgentTool,
-    auditorTool
+    auditorTool,
+    noterTool
 ];
 
 // Re-export individual tools so tests can import them directly.
@@ -45,7 +47,8 @@ export {
     stateTool,
     coderTool,
     coderAgentTool,
-    auditorTool
+    auditorTool,
+    noterTool
 };
 
 export type { ToolDef, ToolContext, LlmContext } from './types.js';
