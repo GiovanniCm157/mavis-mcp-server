@@ -13,13 +13,15 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
-import { tools, type ToolDef, type ToolContext } from './tools/index.js';
+import { tools, type ToolDef, type ToolContext, type LlmContext } from './tools/index.js';
 import type { Workspace } from './workspace.js';
 import type { State } from './state.js';
 
 export interface ServerOptions {
     workspace: Workspace;
     state: State;
+    /** Optional LLM client + config. When undefined, mavis_coder returns config_error. */
+    llm?: LlmContext;
 }
 
 /**
@@ -28,7 +30,8 @@ export interface ServerOptions {
 export async function startServer(opts: ServerOptions): Promise<Server> {
     const ctx: ToolContext = {
         workspace: opts.workspace,
-        state: opts.state
+        state: opts.state,
+        llm: opts.llm
     };
 
     const server = new Server(
