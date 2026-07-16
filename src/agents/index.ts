@@ -5,6 +5,7 @@
 export { coderCall } from './coder.js';
 export { coderAgent, stripThinkBlocks } from './coder-loop.js';
 export { runAudit } from './auditor.js';
+export { runNoter, type NlmExec } from './noter.js';
 export type {
     AgentRequest,
     AgentResponse,
@@ -20,6 +21,9 @@ export type {
     Finding,
     FindingSeverity,
     LlmConfig,
+    NoterAction,
+    NoterRequest,
+    NoterResponse,
     ToolExecutor
 } from './types.js';
 export { ALL_CHECKS } from './types.js';
