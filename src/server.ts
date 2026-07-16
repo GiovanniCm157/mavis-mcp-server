@@ -31,7 +31,8 @@ export async function startServer(opts: ServerOptions): Promise<Server> {
     const ctx: ToolContext = {
         workspace: opts.workspace,
         state: opts.state,
-        llm: opts.llm
+        llm: opts.llm,
+        toolRegistry: tools
     };
 
     const server = new Server(

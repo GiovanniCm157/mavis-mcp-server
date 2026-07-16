@@ -25,6 +25,12 @@ export interface ToolContext {
     state: State;
     /** Present when an LLM API key is configured. See LlmContext. */
     llm?: LlmContext;
+    /**
+     * All registered tool definitions. Used by mavis_coder_agent to
+     * expose the workspace tools to the LLM. Injected by the server
+     * at startup to avoid circular imports.
+     */
+    toolRegistry?: ToolDef[];
 }
 
 /**

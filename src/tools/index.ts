@@ -13,6 +13,7 @@ import { supabaseTool } from './supabase.js';
 import { runTestsTool } from './run_tests.js';
 import { stateTool } from './state.js';
 import { coderTool } from './coder.js';
+import { coderAgentTool } from './coder-agent.js';
 import type { ToolDef } from './types.js';
 
 export const tools: ToolDef[] = [
@@ -25,7 +26,8 @@ export const tools: ToolDef[] = [
     supabaseTool,
     runTestsTool,
     stateTool,
-    coderTool
+    coderTool,
+    coderAgentTool
 ];
 
 // Re-export individual tools so tests can import them directly.
@@ -39,7 +41,8 @@ export {
     supabaseTool,
     runTestsTool,
     stateTool,
-    coderTool
+    coderTool,
+    coderAgentTool
 };
 
 export type { ToolDef, ToolContext, LlmContext } from './types.js';
