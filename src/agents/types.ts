@@ -9,7 +9,7 @@
  * Current agents:
  *   - coder         : MiniMax-M3 single-shot text generation (B-1)
  *   - coderAgent    : MiniMax-M3 with tool-calling agent loop (B-2)
- *   - auditor       : read-only antipattern detector (B-3, future)
+ *   - auditor       : read-only KOMO antipattern detector (B-3)
  *   - noter         : writes directly to NotebookLM via nlm CLI (B-4, future)
  */
 
@@ -51,102 +51,138 @@ export interface CoderResponse {
 // B-2: Agent loop types
 // ────────────────────────────────────────────────────────────
 
-/**
- * Request to run a multi-step agent loop. The model can call any
- * of the tools in `tools` (or all available if undefined) until it
- * produces a final response (finish_reason=stop) or `max_iterations`
- * is reached.
- */
 export interface AgentRequest extends CoderRequest {
-    /**
-     * Max agent iterations. Each iteration is one round-trip to the LLM
-     * (which may include multiple tool calls). Defaults to 10. Hard cap 30.
-     * Going past 30 means your prompt is too vague — refactor it.
-     */
     max_iterations?: number;
-    /**
-     * Subset of tool names to expose to the LLM. If undefined, ALL
-     * registered mavis_* tools are available EXCEPT the agent itself
-     * (mavis_coder_agent) and single-shot mavis_coder — that would be
-     * recursion. To re-enable them, pass them explicitly here.
-     */
     tools?: string[];
-    /**
-     * Tool choice strategy. Defaults to "auto" (LLM decides when to call).
-     * "required" forces at least one tool call per iteration.
-     * "none" forces text-only (effectively disables tool calling).
-     * Or pass { type: 'function', function: { name: 'X' } } to force a specific tool.
-     */
     tool_choice?: 'auto' | 'required' | 'none' | { type: 'function'; function: { name: string } };
 }
 
-/**
- * A single tool invocation the agent made during its loop.
- * Used for transparency and debugging — included in the response.
- */
 export interface AgentToolCallRecord {
-    /** 1-indexed iteration number (1 = first call to LLM). */
     iteration: number;
-    /** Name of the tool invoked. */
     tool_name: string;
-    /** Args passed to the tool (parsed JSON). */
     tool_args: Record<string, any>;
-    /** Truncated result text (first 500 chars) for readability. */
     result_summary: string;
-    /** Whether the tool returned isError=true. */
     is_error: boolean;
-    /** Wall-clock duration of this specific tool call. */
     duration_ms: number;
 }
 
 export interface AgentResponse {
-    /** Final assistant content (think blocks stripped). */
     final_content: string;
-    /** Number of LLM round-trips (1 = no tool calls, N = N iterations). */
     iterations: number;
-    /** All tool calls made, in order, across all iterations. */
     tool_calls: AgentToolCallRecord[];
-    /** Aggregated token usage across all iterations. */
     total_usage: CoderUsage;
-    /** Wall-clock latency for the entire agent run. */
     latency_ms: number;
-    /** Why the loop terminated. */
     finish_reason: 'stop' | 'max_iterations' | 'length' | 'content_filter' | 'error';
-    /** Model id that actually responded (last iteration). */
     model: string;
 }
 
-/**
- * Minimal contract for a tool that the agent loop can invoke.
- * Decoupled from the MCP ToolDef so we can test the loop with mocks.
- */
 export interface AgentTool {
     name: string;
     description: string;
-    /** OpenAI-compatible JSON schema for the tool's input. */
     parameters: {
         type: 'object';
         properties: Record<string, any>;
         required?: string[];
     };
-    /**
-     * Execute the tool with the given args. Return a string result.
-     * Throw or return is_error=true to signal failure to the LLM.
-     */
     execute: (args: Record<string, any>) => Promise<{
         content: string;
         is_error: boolean;
     }>;
 }
 
-/**
- * Callback to execute a tool by name. Lets the agent layer stay
- * decoupled from the MCP tool registry (the tool wrapper provides it).
- */
 export type ToolExecutor = (name: string, args: Record<string, any>) => Promise<{
     content: string;
     is_error: boolean;
 }>;
+
+// ────────────────────────────────────────────────────────────
+// B-3: Auditor types
+// ────────────────────────────────────────────────────────────
+
+/** Severity of an audit finding. */
+export type FindingSeverity = 'error' | 'warning' | 'info';
+
+/** Categories of KOMO antipatterns the auditor can detect. */
+export type CheckKind =
+    | 'muro_de_fuego'        // tenant isolation: query ops_* sin ownerId
+    | 'zero_bifurcation'     // if/else por categoria en vez de getVerticalStrategy
+    | 'service_no_wire'      // service function sin window.* en controller
+    | 'mega_function'        // función > 200 líneas
+    | 'direct_auth_users'    // referencia a auth.users en RLS
+    | 'jsonb_column_audit';  // toca col JSONB sin documentar otras queries
+
+export const ALL_CHECKS: CheckKind[] = [
+    'muro_de_fuego',
+    'zero_bifurcation',
+    'service_no_wire',
+    'mega_function',
+    'direct_auth_users',
+    'jsonb_column_audit'
+];
+
+/** A single finding. Like a linter diagnostic. */
+export interface Finding {
+    /** File where the issue was found (workspace-relative). */
+    file: string;
+    /** 1-indexed line number. May be undefined if the finding is file-level. */
+    line?: number;
+    /** Which check flagged it. */
+    kind: CheckKind;
+    /** Severity: 'error' (must fix), 'warning' (should fix), 'info' (FYI). */
+    severity: FindingSeverity;
+    /** Human-readable message describing the issue. */
+    message: string;
+    /** Optional code snippet (the line that triggered the finding). */
+    snippet?: string;
+}
+
+export interface AuditorRequest {
+    /**
+     * File or directory to audit. Workspace-relative path. Defaults to
+     * '.' (the entire workspace). If a directory, all supported source
+     * files are scanned recursively.
+     */
+    path?: string;
+    /**
+     * Glob filter (e.g. "*.js", "*.ts"). Defaults to "*.{js,ts,tsx,jsx}".
+     * Applied at file enumeration time — not the same as the path.
+     */
+    glob?: string;
+    /**
+     * Subset of checks to run. Defaults to ALL_CHECKS.
+     */
+    checks?: CheckKind[];
+    /**
+     * Minimum severity to report. Findings below this threshold are
+     * silently dropped. Defaults to 'info' (all findings).
+     */
+    severity_threshold?: FindingSeverity;
+    /**
+     * Max number of findings to return. Defaults to 200. If exceeded,
+     * the response includes a `truncated: true` flag and the first N
+     * findings (sorted by severity, then by file/line).
+     */
+    max_findings?: number;
+}
+
+export interface AuditorResponse {
+    /** All findings, sorted by severity (errors first) then file/line. */
+    findings: Finding[];
+    /** Aggregate stats. */
+    summary: {
+        total: number;
+        by_severity: Record<FindingSeverity, number>;
+        by_kind: Record<CheckKind, number>;
+    };
+    /** True if findings were truncated by max_findings. */
+    truncated: boolean;
+    /** Which checks were actually run (after filtering). */
+    checks_run: CheckKind[];
+    /** How many files were scanned. */
+    files_scanned: number;
+    /** Wall-clock latency. */
+    latency_ms: number;
+}
 
 /**
  * Result envelope for agent calls. Mirrors the pattern used in the
