@@ -32,7 +32,18 @@ export async function startServer(opts: ServerOptions): Promise<Server> {
         workspace: opts.workspace,
         state: opts.state,
         llm: opts.llm,
-        toolRegistry: tools
+        toolRegistry: tools,
+        notify: (level, message, data) => {
+            // Fire-and-forget logging notification. If the client doesn't
+            // support logging notifications, this is a no-op.
+            server.sendLoggingMessage({
+                level,
+                logger: 'mavis-mcp',
+                data: { message, ...(data || {}) }
+            } as any).catch(() => {
+                // Client may not have enabled logging — swallow the error.
+            });
+        }
     };
 
     const server = new Server(

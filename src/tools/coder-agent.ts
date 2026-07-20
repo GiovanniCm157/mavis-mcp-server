@@ -1,10 +1,18 @@
 /**
  * mavis_coder_agent tool — wraps the coderAgent multi-step loop.
  *
- * Sprint B-2. The LLM can call any of the registered workspace tools
+ * Sprint B-2 + B-5. The LLM can call any of the registered workspace tools
  * (mavis_bash, mavis_read, mavis_write, mavis_edit, mavis_search,
  * mavis_git, mavis_supabase, mavis_run_tests, mavis_state) iteratively
  * until it produces a final response or hits max_iterations.
+ *
+ * B-5 additions:
+ *   - Realtime progress: emits MCP logging notifications on each
+ *     iteration + tool call (visible in Claude UI's tool panel).
+ *   - Session log: persists the run to JSONL at
+ *     ~/.mavis-mcp/agent-sessions/ (post-mortem + tail -f).
+ *   - Default max_iterations: 20 (was 10). Hard cap 30.
+ *   - Default system prompt for efficiency.
  *
  * Difference from mavis_coder (single-shot):
  *   - mavis_coder      : one prompt → one response, no tools
@@ -19,23 +27,28 @@
  *
  * Input:
  *   prompt           (string, required)
- *   system           (string, optional)
+ *   system           (string, optional — defaults to efficiency-focused prompt)
  *   model            (string, optional — defaults to MiniMax-M3)
  *   max_tokens       (int, optional — per-iteration, defaults to 4096)
  *   temperature      (number 0-2, optional — defaults to 0.2)
- *   max_iterations   (int 1-30, optional — defaults to 10)
+ *   max_iterations   (int 1-30, optional — defaults to 20)
  *   tools            (string[], optional — restrict to subset)
  *   tool_choice      (string | object, optional — default "auto")
+ *   session_id       (string, optional — auto-generated if omitted)
+ *   persist_session  (bool, optional — default true, set false to skip JSONL)
  *
  * Output (success):
  *   { ok: true, data: { final_content, iterations, tool_calls[],
- *                       total_usage, latency_ms, finish_reason, model } }
+ *                       total_usage, latency_ms, finish_reason, model,
+ *                       session_id, session_log_path } }
  *
  * Output (error):
  *   { ok: false, error: { kind, message, details? } }
  */
 
-import { coderAgent } from '../agents/coder-loop.js';
+import { randomUUID } from 'node:crypto';
+import { coderAgent, type AgentProgressEvent } from '../agents/coder-loop.js';
+import { SessionWriter } from '../agents/session-log.js';
 import type { AgentRequest, AgentTool, ToolExecutor } from '../agents/types.js';
 import type { ToolDef } from './types.js';
 
@@ -60,7 +73,9 @@ export const coderAgentTool: ToolDef = {
         'Use this for tasks that require reading files, searching the codebase, running ' +
         'commands, or making multi-step changes. For one-off text generation, use ' +
         'mavis_coder instead. Default tool exposure excludes mavis_coder and ' +
-        'mavis_coder_agent (no recursion).',
+        'mavis_coder_agent (no recursion). ' +
+        'Emits realtime progress notifications (visible in client UI) and persists ' +
+        'the full run to ~/.mavis-mcp/agent-sessions/.',
     inputSchema: {
         type: 'object',
         properties: {
@@ -70,7 +85,7 @@ export const coderAgentTool: ToolDef = {
             },
             system: {
                 type: 'string',
-                description: 'Optional system prompt. Strongly recommended for coding tasks.'
+                description: 'Optional system prompt. If omitted, uses a default efficiency-focused prompt.'
             },
             model: {
                 type: 'string',
@@ -92,7 +107,7 @@ export const coderAgentTool: ToolDef = {
                 type: 'integer',
                 minimum: 1,
                 maximum: 30,
-                description: 'Max agent iterations. Defaults to 10. Hard cap 30.'
+                description: 'Max agent iterations. Defaults to 20. Hard cap 30.'
             },
             tools: {
                 type: 'array',
@@ -101,6 +116,14 @@ export const coderAgentTool: ToolDef = {
             },
             tool_choice: {
                 description: 'Tool choice strategy. "auto" (default), "required", "none", or { type: "function", function: { name: "X" } }.'
+            },
+            session_id: {
+                type: 'string',
+                description: 'Optional session id. Auto-generated (UUID) if omitted. Use the same id to chain or reference via mavis_session_log.'
+            },
+            persist_session: {
+                type: 'boolean',
+                description: 'If true (default), write the run to JSONL in ~/.mavis-mcp/agent-sessions/. Set false to skip persistence.'
             }
         },
         required: ['prompt'],
@@ -133,8 +156,7 @@ export const coderAgentTool: ToolDef = {
             t => t.name !== 'mavis_coder_agent' && t.name !== 'mavis_coder'
         );
 
-        // Build AgentTool[] from the MCP registry. The execute function
-        // bridges MCP ToolDef.handler to the AgentTool contract.
+        // Build AgentTool[] from the MCP registry.
         const agentTools: AgentTool[] = allowedTools.map(t => ({
             name: t.name,
             description: t.description,
@@ -155,8 +177,6 @@ export const coderAgentTool: ToolDef = {
             }
         }));
 
-        // Build executor for the loop. Same as execute above but keyed
-        // by name. The agent loop calls this.
         const executor: ToolExecutor = async (name, toolArgs) => {
             const t = allowedTools.find(x => x.name === name);
             if (!t) {
@@ -179,8 +199,7 @@ export const coderAgentTool: ToolDef = {
             }
         };
 
-        // Build AgentRequest. tool_choice arrives as either a string
-        // or an object — we coerce with JSON parse/string compare.
+        // Build AgentRequest.
         let toolChoice: AgentRequest['tool_choice'];
         if (args.tool_choice !== undefined) {
             if (typeof args.tool_choice === 'string') {
@@ -203,7 +222,55 @@ export const coderAgentTool: ToolDef = {
             tool_choice: toolChoice
         };
 
-        const result = await coderAgent(req, llm.client, agentTools, executor, llm.config);
+        // ── Session setup (B-5) ────────────────────────────
+        const sessionId = args.session_id !== undefined
+            ? String(args.session_id)
+            : `agent-${Date.now()}-${randomUUID().slice(0, 8)}`;
+        const persist = args.persist_session !== false; // default true
+
+        const sessionWriter = persist
+            ? new SessionWriter({ sessionId, promptPrefix: req.prompt.slice(0, 100) })
+            : undefined;
+
+        // ── onProgress callback (B-5) ──────────────────────
+        // Forwards events to:
+        //   1. MCP logging notification (if ctx.notify is set — wired by server.ts)
+        //   2. SessionWriter (for JSONL persistence — handled inside coderAgent via opts)
+        //   3. Stderr if MAVIS_MCP_VERBOSE=1
+        const onProgress = (e: AgentProgressEvent): void => {
+            if (ctx.notify) {
+                const level = e.event.event === 'error' ? 'error'
+                    : e.event.event === 'tool_result' && (e.event as any).is_error ? 'warning'
+                    : 'info';
+                ctx.notify(level, `[${e.event.event}] iter=${(e.event as any).iteration ?? '-'}`, {
+                    session_id: e.session_id,
+                    event: e.event
+                });
+            }
+        };
+
+        const result = await coderAgent(
+            req,
+            llm.client,
+            agentTools,
+            executor,
+            llm.config,
+            {
+                onProgress,
+                sessionWriter,
+                sessionId,
+                verbose: process.env.MAVIS_MCP_VERBOSE === '1'
+            }
+        );
+
+        // Augment the success data with session metadata so the caller
+        // can reference the session later via mavis_session_log.
+        if (result.ok && sessionWriter) {
+            (result.data as any).session_id = sessionId;
+            (result.data as any).session_log_path = sessionWriter.getFilePath();
+        } else if (result.ok) {
+            (result.data as any).session_id = sessionId;
+        }
 
         return {
             content: [{
