@@ -18,6 +18,13 @@ export interface LlmContext {
 }
 
 /**
+ * Callback to send a logging notification to the MCP client.
+ * Wired by the server from Server.sendLoggingMessage.
+ * The `data` object is included as MCP `_meta` and shown in the client UI.
+ */
+export type NotifyFn = (level: 'info' | 'warning' | 'error' | 'debug', message: string, data?: Record<string, any>) => void;
+
+/**
  * Context passed to every tool handler.
  */
 export interface ToolContext {
@@ -31,6 +38,12 @@ export interface ToolContext {
      * at startup to avoid circular imports.
      */
     toolRegistry?: ToolDef[];
+    /**
+     * Optional notification sink. When present, tools that emit progress
+     * events (e.g. mavis_coder_agent) will pipe them to the MCP client
+     * via notifications/message. Wired by the server at startup.
+     */
+    notify?: NotifyFn;
 }
 
 /**
