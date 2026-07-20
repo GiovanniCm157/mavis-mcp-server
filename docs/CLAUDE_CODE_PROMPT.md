@@ -47,24 +47,32 @@ Para todo lo demás (`mavis_bash`, `mavis_read`, `mavis_write`, `mavis_edit`, `m
 
 | Tool | Modelo | Para qué |
 |---|---|---|
-| `mavis_coder_agent` | MiniMax-M3 | **Tu herramienta principal**. Agent loop con tool calling. Usala para TODO trabajo operativo. |
+| `mavis_coder_agent` | MiniMax-M3 | **Tu herramienta principal**. Agent loop con tool calling. Usala para TODO trabajo operativo. **Emite progress en vivo + persiste a JSONL** (B-5). |
 | `mavis_coder` | MiniMax-M3 | Single-shot text (drafts, summaries, sin tools). Para tareas que NO requieren filesystem. |
 | `mavis_auditor` | (none — static) | Linter KOMO. Usalo directo (es $0). |
 | `mavis_noter` | (none — nlm CLI) | NotebookLM. Usalo directo (no usa MiniMax-M3). |
+| `mavis_session_log` | (none — file) | Lee/limpia logs de agent runs pasados (`~/.mavis-mcp/agent-sessions/`). B-5. |
 
 ---
 
-## `mavis_coder_agent` — Tu herramienta principal (Sprint B-2)
+## `mavis_coder_agent` — Tu herramienta principal (Sprint B-2 + B-5)
 
 Multi-step agent loop. MiniMax-M3 puede llamar **cualquiera de las 9 workspace tools** iterativamente hasta producir un resultado o llegar a `max_iterations`.
+
+**B-5: realtime visibility + session log**:
+- Cada iteración emite una **MCP logging notification** que Claude UI muestra en vivo ("iteration 3/20: mavis_search... ", "tool result in 120ms", etc.).
+- El run completo se persiste a `~/.mavis-mcp/agent-sessions/{ISO-date}-{prompt-hash}.jsonl` (append-only). Podés `tail -f` el archivo o usar `mavis_session_log` para revisarlo después.
+- Cada run tiene un `session_id` (UUID) que se devuelve en la respuesta. Usalo con `mavis_session_log` para trazabilidad cross-session.
 
 **Input**:
 ```js
 mavis_coder_agent({
   prompt: "Tarea específica. Qué hacer, qué archivos, qué resultado esperado.",
-  system: "Constraints. Tono. Restricciones. Lo que NO debe hacer.",
-  max_iterations: 10,  // default 10, hard cap 30
-  tools: ["mavis_read", "mavis_bash", "mavis_run_tests"]  // opcional, default: all except coder
+  system: "Constraints. Tono. Restricciones. Lo que NO debe hacer.",  // opcional — default es efficiency-focused
+  max_iterations: 20,  // default 20 (B-5), hard cap 30
+  tools: ["mavis_read", "mavis_bash", "mavis_run_tests"],  // opcional
+  session_id: "agent-...",  // opcional — auto-generado si se omite
+  persist_session: true  // opcional — default true
 })
 ```
 
@@ -73,14 +81,14 @@ mavis_coder_agent({
 {
   ok: true,
   data: {
-    final_content: "string — el resultado que el LLM produce",
+    final_content: "string",
     iterations: 3,
-    tool_calls: [
-      { iteration, tool_name, tool_args, result_summary, is_error, duration_ms }
-    ],
+    tool_calls: [{ iteration, tool_name, tool_args, result_summary, is_error, duration_ms }],
     total_usage: { prompt_tokens, completion_tokens, total_tokens },
     latency_ms: 5420,
-    finish_reason: "stop | max_iterations | length | error"
+    finish_reason: "stop | max_iterations | length | error",
+    session_id: "agent-2026-07-20_...",
+    session_log_path: "/Users/.../agent-sessions/2026-07-20_...jsonl"  // si persist_session=true
   }
 }
 ```
@@ -94,7 +102,7 @@ mavis_coder_agent({
 
 **Think blocks**: MiniMax-M3 emite `` blocks. El agent los **strippea automáticamente** antes de agregar al contexto. `final_content` ya viene limpio.
 
-**Defaults**: model=`MiniMax-M3`, max_tokens=4096, temperature=0.2, max_iterations=10.
+**Defaults** (B-5): model=`MiniMax-M3`, max_tokens=4096, temperature=0.2, max_iterations=**20**, system prompt = "Be efficient. Plan tool calls. Don't re-read. Batch edits. Be terse. Stop when done."
 
 **Latency**: 1-2s sin tools, 5-15s loop 3-5 iter, 20-40s loop 10 iter.
 
@@ -136,6 +144,48 @@ Cuando el user te pide algo:
 
 **User**: "¿Cuál es la doctrina sobre X?"
 - ✅ Bien: `mavis_noter(action="query", question="...")` directo (no usa MiniMax-M3).
+
+---
+
+## `mavis_session_log` (Sprint B-5) — Post-mortem de agent runs
+
+Lee/limpia los JSONL que `mavis_coder_agent` persiste en `~/.mavis-mcp/agent-sessions/`. Acciones:
+
+```js
+mavis_session_log({ action: "list" })                            // últimas 20 sesiones
+mavis_session_log({ action: "list", limit: 50 })                 // últimas 50
+mavis_session_log({ action: "get", session_id: "agent-..." })    // full session
+mavis_session_log({ action: "tail", session_id: "...", tail_n: 10 })  // últimos 10 eventos
+mavis_session_log({ action: "clear", max_age_days: 30 })         // limpia >30 días
+```
+
+**Output** (list):
+```json
+{
+  "ok": true,
+  "data": {
+    "log_dir": "/Users/.../agent-sessions",
+    "count": 3,
+    "sessions": [
+      { "session_id": "...", "file": "...", "started_at": "...", "iterations": 12, "finish_reason": "max_iterations", "total_ms": 45000, ... }
+    ]
+  }
+}
+```
+
+**Eventos del JSONL** (uno por línea):
+- `start` — params del run (model, max_iterations, prompt preview)
+- `iteration_start` — empieza nueva iteración
+- `llm_call` — LLM respondió (con usage + latency)
+- `tool_call` — el LLM pidió ejecutar una tool (con args)
+- `tool_result` — la tool terminó (con duration + is_error)
+- `iteration_end` — iteración cerrada (con/sin tool calls)
+- `end` — run completo (con finish_reason + total_usage)
+
+**Cuándo usar**:
+- ✅ Después de un agent run largo: "¿qué tools llamó y cuánto tardaron?"
+- ✅ Cuando un run terminó con `max_iterations`: "¿qué le faltó?"
+- ✅ Debug de runs fallidos: revisar el JSONL de la sesión
 
 ---
 
@@ -218,6 +268,8 @@ mavis_noter({
 | Generar texto sin tocar nada | `mavis_coder` |
 | Auditar código (linter KOMO) | `mavis_auditor` directo |
 | Consultar doctrina NotebookLM | `mavis_noter` directo |
+| Post-mortem de un agent run pasado | `mavis_session_log` directo |
+| Ver qué hizo un agent run específico | `mavis_session_log` (action=get/tail) |
 | Validar resultado de un agent run | (vos, con tu razonamiento Sonnet) |
 | Reportar al user | (vos) |
 
