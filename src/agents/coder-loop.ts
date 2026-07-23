@@ -21,8 +21,11 @@
  *   - Think block stripping: <think>...</think> removed from content
  *     before adding to history. Prevents the model from "listening to
  *     itself" across iterations.
- *   - Tool recursion guard: by default, mavis_coder and mavis_coder_agent
- *     are NOT exposed to the LLM. Caller can opt in via req.tools.
+ *   - Tool recursion guard: by default, ONLY mavis_coder_agent itself
+ *     is excluded. mavis_coder (single-shot) and ALL other mavis_*
+ *     tools (including non-LLM: mavis_auditor, mavis_noter,
+ *     mavis_session_log) are exposed by default. B-6 doctrine:
+ *     "MiniMax does everything except think."
  *   - Errors during a tool call don't crash the loop — they're recorded
  *     as is_error=true and sent back to the LLM as a tool message with
  *     an "Error: " prefix. The model can retry or take a different path.
@@ -251,10 +254,21 @@ export async function coderAgent(
     });
 
     // ── Build tools ────────────────────────────────────────
+    // B-6 doctrinal change: by default, ALL registered mavis_* tools
+    // are exposed to the LLM — including the non-LLM tools
+    // (mavis_auditor, mavis_noter, mavis_session_log). The user
+    // doctrine is "MiniMax does everything except think" — so even
+    // tools that don't consume tokens should be called BY the LLM,
+    // not directly by the calling client.
+    //
+    // The only exclusion is mavis_coder_agent itself (recursion guard):
+    // an agent run calling its own tool would cause infinite loops.
+    // mavis_coder (single-shot) IS exposed — the LLM can delegate
+    // sub-tasks that just need text generation without tools.
     const allowedNames = req.tools
         ? new Set(req.tools)
         : new Set(allTools.map(t => t.name).filter(n =>
-            n !== 'mavis_coder' && n !== 'mavis_coder_agent'));
+            n !== 'mavis_coder_agent'));
 
     const tools = buildOpenAITools(allTools, allowedNames);
     if (tools.length === 0) {
