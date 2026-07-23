@@ -67,13 +67,13 @@ function extractText(result: { content: Array<{ type: string; text?: string }> }
 export const coderAgentTool: ToolDef = {
     name: 'mavis_coder_agent',
     description:
-        'Run a multi-step agent loop where MiniMax-M3 can call workspace tools ' +
+        'Run a multi-step agent loop where MiniMax-M3 can call ANY mavis_* tool ' +
         '(mavis_bash, mavis_read, mavis_write, mavis_edit, mavis_search, mavis_git, ' +
-        'mavis_supabase, mavis_run_tests, mavis_state) iteratively until the task is done. ' +
-        'Use this for tasks that require reading files, searching the codebase, running ' +
-        'commands, or making multi-step changes. For one-off text generation, use ' +
-        'mavis_coder instead. Default tool exposure excludes mavis_coder and ' +
-        'mavis_coder_agent (no recursion). ' +
+        'mavis_supabase, mavis_run_tests, mavis_state, mavis_auditor, mavis_noter, ' +
+        'mavis_session_log, mavis_coder) iteratively until the task is done. ' +
+        'Default doctrine (B-6): ALL tools are exposed to the LLM — ' +
+        'including non-LLM ones. The LLM is the one that decides which to call. ' +
+        'Only mavis_coder_agent is excluded (recursion guard). ' +
         'Emits realtime progress notifications (visible in client UI) and persists ' +
         'the full run to ~/.mavis-mcp/agent-sessions/.',
     inputSchema: {
@@ -149,11 +149,14 @@ export const coderAgentTool: ToolDef = {
         }
 
         // Resolve tool registry from context. The server injects this
-        // at startup so we avoid circular imports. Exclude self and
-        // single-shot coder to prevent the LLM from recursing.
+        // at startup so we avoid circular imports. Exclude only self
+        // (mavis_coder_agent) for recursion guard. ALL other mavis_*
+        // tools are exposed to the LLM — including non-LLM ones
+        // (mavis_auditor, mavis_noter, mavis_session_log) per B-6 doctrine:
+        // "MiniMax does everything except think."
         const registry = ctx.toolRegistry || [];
         const allowedTools = registry.filter(
-            t => t.name !== 'mavis_coder_agent' && t.name !== 'mavis_coder'
+            t => t.name !== 'mavis_coder_agent'
         );
 
         // Build AgentTool[] from the MCP registry.

@@ -867,9 +867,11 @@ describe('mavis_coder_agent (MCP tool wrapper)', () => {
         expect(parsed.error.kind).toBe('config_error');
     });
 
-    it('excludes mavis_coder and self from default tool list', async () => {
-        // Build a context where the registry contains the agent tools
-        // plus 2 generic tools. The wrapper should drop self + coder.
+    it('excludes only self (mavis_coder_agent) from default tool list (B-6)', async () => {
+        // B-6 doctrinal change: ALL mavis_* tools are exposed to the LLM
+        // by default — including non-LLM tools (mavis_auditor, mavis_noter,
+        // mavis_session_log) and single-shot mavis_coder. Only the agent
+        // itself is excluded (recursion guard).
         const genericA: any = {
             name: 'generic_a', description: 'A',
             inputSchema: { type: 'object', properties: {}, required: [] },
@@ -880,22 +882,28 @@ describe('mavis_coder_agent (MCP tool wrapper)', () => {
             inputSchema: { type: 'object', properties: {}, required: [] },
             handler: async () => ({ content: [{ type: 'text', text: 'b' }] })
         };
+        const coderSingle: any = {
+            name: 'mavis_coder', description: 'Coder single-shot',
+            inputSchema: { type: 'object', properties: { prompt: { type: 'string' } }, required: ['prompt'] },
+            handler: async () => ({ content: [{ type: 'text', text: 'c' }] })
+        };
         const client = makeMockClient();
         client.addResponse({ content: 'no tools needed' });
 
         const ctx = makeCtx({
             llm: { client, config: makeLlmConfig() },
-            toolRegistry: [genericA, genericB, coderAgentTool]
+            toolRegistry: [genericA, genericB, coderSingle, coderAgentTool]
         });
 
         await coderAgentTool.handler({ prompt: 'just answer' }, ctx);
 
-        // The OpenAI call should list only generic_a and generic_b.
+        // The OpenAI call should list generic_a, generic_b, AND mavis_coder.
+        // mavis_coder_agent is excluded (self).
         const toolsSent = client.calls[0].args.tools;
         const names = toolsSent.map((t: any) => t.function.name);
         expect(names).toContain('generic_a');
         expect(names).toContain('generic_b');
-        expect(names).not.toContain('mavis_coder');
+        expect(names).toContain('mavis_coder');
         expect(names).not.toContain('mavis_coder_agent');
     });
 
