@@ -145,23 +145,50 @@ Cuando el user te pide algo:
 **User**: "¿Cuál es la doctrina sobre tenant isolation?"
 - ✅ Bien: `mavis_coder_agent(prompt="Use mavis_noter with action=query to ask: 'What's the doctrine on tenant isolation in ops_* queries?'")`
 
+**User**: "Necesito ver el schema de ops_inventario antes de refactorizar"
+- ✅ Bien: `mavis_coder_agent(prompt="Use mavis_supabase to: (1) list columns of ops_inventario with their types, (2) list indexes, (3) check if 'atributos' is JSONB. Return as a structured summary.")` — Kimi nunca corre la query directo, SIEMPRE delega a Mavis
+
+**User**: "Cuántas unidades Auto hay en la base?"
+- ✅ Bien: `mavis_coder_agent(prompt="Use mavis_supabase to run: SELECT COUNT(*) FROM ops_activos WHERE categoria = 'auto' AND dado_de_baja = false. Report the count.")` — Kimi nunca corre la query directo, SIEMPRE delega a Mavis
+
 ---
 
 ## Supabase + NotebookLM específicos
 
 ### `mavis_supabase` (read-only CLI wrapper)
 
-El LLM puede invocar `mavis_supabase` con subcommands read-only:
-- `projects list` — lista proyectos linkeados
-- `db query --linked "SELECT ..."` — SELECTs
-- `db diff` — comparar schema
+**Para buscar CONTEXTO en Supabase, SIEMPRE delegá a `mavis_coder_agent`** con un prompt que incluya la query específica. Kimi NO corre queries de Supabase directo — el LLM (vía Mavis) puede combinar el resultado con otras acciones (auditor, noter, workspace tools) en un solo run.
+
+**Patrón de delegación**:
+```js
+mavis_coder_agent({
+  prompt: "Use mavis_supabase to [query específica]. Reporta [qué querés saber]."
+})
+```
+
+**Read-only subcommands** (lo que el LLM puede invocar dentro del agent):
+- `mavis_supabase({ args: ['projects', 'list'] })` — lista proyectos linkeados
+- `mavis_supabase({ args: ['db', 'query', '--linked', 'SELECT ...'] })` — SELECTs
+- `mavis_supabase({ args: ['db', 'diff'] })` — comparar schema
 
 **DENIED** (no se puede):
 - `db push` (escribir migraciones)
 - `db reset` (drop + recreate)
 - `db execute` (cualquier DDL/DML)
 
-**Para migraciones**: el user corre `supabase db push` a mano (necesita su confirmación explícita).
+**Para migraciones**: el user corre `supabase db push` a mano. El flujo:
+1. Vos (Kimi) escribís el SQL en `supabase/migrations/<timestamp>_<name>.sql`
+2. Le decís al user: "Migración lista en X. Corré `supabase db push` cuando estés listo"
+3. NO la pushees vos mismo
+
+**Schemas comunes a consultar** (solo lectura):
+- `ops_inventario` — modelo de inventario (Sprint 28+)
+- `ops_activos` — unidades físicas Auto/Campo
+- `ops_ordenes` — órdenes de servicio
+- `ops_deals` — deals/cotizaciones
+- `ops_inventario_existencias` — stock por bodega (cross-table normalizada)
+- `ops_bodegas` — bodegas
+- `pg_policies` — RLS policies (auditar doctrine "nunca referenciar auth.users")
 
 ### `mavis_noter` (nlm CLI wrapper para NotebookLM)
 
